@@ -22,13 +22,13 @@ build: FORCE
 	pipenv run python setup.py bdist_wheel
 
 bump-%:
-	bumpversion $*
+	pipenv run bumpversion $*
 
 patch: bump-patch
 
 minor: bump-minor
 
-patch: bump-major
+major: bump-major
 
 init:
 	mkdir -p artifacts data models

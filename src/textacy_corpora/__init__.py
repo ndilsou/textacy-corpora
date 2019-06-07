@@ -1,0 +1,2 @@
+from .corpora import TextCorpora
+
