@@ -1,11 +1,10 @@
-from functools import partial
 from itertools import islice
 import json
 import logging
 from operator import attrgetter, methodcaller
 from pathlib import Path
-from typing import Callable, Dict, Iterable, Iterator, Optional, Sequence, TypeVar, Union
-
+from typing import Callable, Dict, Iterable, Iterator, Optional, Sequence, Tuple, TypeVar, Union
+import itertools
 import spacy
 from spacy.language import Language
 from spacy.tokens import Doc
@@ -14,10 +13,15 @@ from textacy import Corpus
 from textacy.corpus import _get_spacy_lang
 import toolz as tlz
 import toolz.curried as tlzc
+import numpy as np
+
+from .typing import Data, LabelledData
+from .utils import unpack
 
 T = TypeVar('T')
 
 LOGGER = logging.getLogger(__name__)
+
 
 class TextCorpora:
     '''
@@ -55,7 +59,7 @@ class TextCorpora:
         elif isinstance(idx_or_slice, int): # single item
             if idx_or_slice < 0:
                 seq = reversed(self)
-                idx_or_slice *= -1
+                idx_or_slice = -idx_or_slice - 1
             else:
                 seq = iter(self)
             result = tlz.nth(idx_or_slice, seq)
@@ -77,17 +81,17 @@ class TextCorpora:
     def labels(self):
         return [c for c in self._corpora.keys()]
 
-    def n_docs(self, *, corpora: Optional[Union[str, Sequence[str]]] = None):
+    def n_docs(self, corpora: Optional[Union[str, Sequence[str]]] = None):
         func = attrgetter('n_docs')
 
         return self._agg_with(func, sum, corpora)
 
-    def n_sents(self, *, corpora: Optional[Union[str, Sequence[str]]] = None):
+    def n_sents(self, corpora: Optional[Union[str, Sequence[str]]] = None):
         func = attrgetter('n_sents')
 
         return self._agg_with(func, sum, corpora)
 
-    def n_tokens(self, *, corpora: Optional[Union[str, Sequence[str]]] = None):
+    def n_tokens(self, corpora: Optional[Union[str, Sequence[str]]] = None):
         func = attrgetter('n_tokens')
 
         return self._agg_with(func, sum, corpora)
@@ -97,7 +101,6 @@ class TextCorpora:
             normalize: str = 'lemma',
             weighting: str = 'count',
             as_strings: bool = False,
-            *,
             corpora: Optional[Union[str, Sequence[str]]] = None
     ) -> dict:
         '''
@@ -107,7 +110,7 @@ class TextCorpora:
         '''
         func = methodcaller('word_counts', normalize, weighting, as_strings)
 
-        return self._agg_with(func, tlz.merge_with(sum), corpora)
+        return self._agg_with(func, tlzc.merge_with(sum), corpora)
 
     def word_doc_counts(
             self,
@@ -115,16 +118,15 @@ class TextCorpora:
             weighting: str = 'count',
             smooth_idf: bool = True,
             as_strings: bool = False,
-            *,
             corpora: Optional[Union[str, Sequence[str]]] = None
     ) -> dict: # pylint: disable=too-many-arguments
         '''
         Map the set of unique words in the Corpora to their document counts as absolute,
         relative, inverse, or binary frequencies of occurence.
         '''
-        func = methodcaller('word_doc_count', normalize, weighting, smooth_idf, as_strings)
+        func = methodcaller('word_doc_counts', normalize, weighting, smooth_idf, as_strings)
 
-        return self._agg_with(func, tlz.merge_with(sum), corpora)
+        return self._agg_with(func, tlzc.merge_with(sum), corpora)
 
     def _agg_with(
             self,
@@ -153,7 +155,7 @@ class TextCorpora:
             matched_corpora = (
                 corpus
 
-                for cat, corpus in self._corpora.values()
+                for cat, corpus in self._corpora.items()
 
                 if cat in corpora
             )
@@ -242,34 +244,57 @@ class TextCorpora:
             LOGGER.warning('corpus %s exists. It will be overwritten', label)
         self._corpora[label] = corpus
 
+    def _get_or_create_corpus(self, label: str) -> Corpus:
+        corpus: Optional[Corpus] = self._corpora.get(label)
 
-    # def add():
-    #     pass
+        if corpus is None:
+            LOGGER.debug('new corpus %s created.', label)
+            corpus = Corpus(self.lang)
+            self._corpora[label] = corpus
 
-    # def add_doc():
-    #     pass
+        return corpus
 
-    # def add_docs():
-    #     pass
+    def add_text(self, label: str, text: str) -> None:
+        corpus = self._get_or_create_corpus(label)
+        corpus.add_text(text)
 
-    # def add_record():
-    #     pass
+    def add_texts(self, label: str, texts: Iterable[str], batch_size: int = 1000) -> None:
+        corpus = self._get_or_create_corpus(label)
+        corpus.add_texts(texts, batch_size)
 
-    # def add_records():
-    #     pass
+    def add_doc(self, label: str, doc: Doc) -> None:
+        corpus = self._get_or_create_corpus(label)
+        corpus.add_doc(doc)
 
-    # def add_text():
-    #     pass
+    def add_docs(self, label: str, docs: Iterable[Doc]) -> None:
+        corpus = self._get_or_create_corpus(label)
+        corpus.add_docs(docs)
 
-    # def add_texts():
-    #     pass
+    def add_record(self, label: str, record: Tuple[str, dict]) -> None:
+        corpus = self._get_or_create_corpus(label)
+        corpus.add_record(record)
 
-    # def vector_norms():
-    #     pass
+    def add_records(self, label: str, records: Iterable[Tuple[str, dict]], batch_size: int = 1000) -> None:
+        corpus = self._get_or_create_corpus(label)
+        corpus.add_records(records, batch_size)
 
-    # def vectors():
-    #     pass
+    def add(self, label: str,  data: Data, batch_size: int = 1000) -> None:
+        corpus = self._get_or_create_corpus(label)
+        corpus.add(data, batch_size)
 
+    def add_labelled(self, labelled_data: LabelledData, batch_size: int = 1000) -> None:
+        for label, partition in itertools.groupby(labelled_data, key=tlzc.get(0)):
+            corpus = self._get_or_create_corpus(label)
+            data = tlz.map(unpack, partition)
+            corpus.add(data, batch_size)
+
+    def vectors(self, corpora: Optional[Union[str, Sequence[str]]] = None) -> np.ndarray:
+        """Constituent docs' word vectors stacked in a 2d array."""
+        return np.vstack([corpus.vectors for corpus in self.corpora(corpora)])
+
+    def vector_norms(self, corpora: Optional[Union[str, Sequence[str]]] = None) -> np.ndarray:
+        """Constituent docs' L2-normalized word vectors stacked in a 2d array."""
+        return np.vstack([corpus.vector_norms for corpus in self.corpora(corpora)])
 
 
 __all__ = [
