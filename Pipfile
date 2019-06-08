@@ -15,11 +15,15 @@ twine = "*"
 wheel = "*"
 bumpversion = "*"
 pytest = "*"
+nltk = "*"
+textacy-corpora = {editable = true,path = "."}
+pytest-watch = "*"
 
 [packages]
 cytoolz = "*"
 textacy = "*"
 spacy = "*"
+numpy = "*"
 
 [requires]
 python_version = "3.7"

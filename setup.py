@@ -2,7 +2,7 @@ import os
 import re
 import subprocess
 
-from setuptools import find_packages, setup
+from setuptools import Command, find_packages, setup
 
 
 def read(fname):
@@ -15,6 +15,18 @@ with open(os.path.join(root_path, "src/textacy_corpora", "about.py")) as f:
     exec(f.read(), about) # pylint: disable=exec-used
 
 
+class CleanCommand(Command):
+    """Custom clean command to tidy up the project root."""
+    user_options: list = []
+    def initialize_options(self):
+        pass
+
+    def finalize_options(self):
+        pass
+
+    def run(self):
+        os.system('rm -vrf ./build ./dist ./*.pyc ./*.tgz ./*.egg-info')
+
 setup(
     name=about['__title__'],
     maintainer=about['__maintainer__'],
@@ -26,7 +38,8 @@ setup(
     install_requires=[
         'spacy',
         'textacy',
-        'cytoolz'
+        'cytoolz',
+        'numpy'
     ],
     packages=find_packages(where='src'),
     package_dir={'': 'src'},
@@ -39,4 +52,6 @@ setup(
         "Natural Language :: English",
         "Topic :: Text Processing :: Linguistic",
     ],
-)
+    cmdclass={
+        'clean': CleanCommand,
+    })
