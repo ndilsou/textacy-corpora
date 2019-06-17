@@ -1,6 +1,7 @@
 project-root=$(shell git rev-parse --show-toplevel)
 
 .DEFAULT_GOAL := help
+.PHONY: build
 
 #########################################################
 # HELP
@@ -25,6 +26,9 @@ clean-all: clean
 
 build:
 	pipenv run python setup.py bdist_wheel
+
+upload:
+	twine upload --repository-url https://pypi.inyourarea.co.uk/inyourarea/staging dist/*
 
 watch-test: ## Watch the test suite
 	pipenv run pytest-watch tests/ src/

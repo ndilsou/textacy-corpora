@@ -18,6 +18,7 @@ pytest = "*"
 nltk = "*"
 textacy-corpora = {editable = true,path = "."}
 pytest-watch = "*"
+ipython-autotime = "*"
 
 [packages]
 cytoolz = "*"
