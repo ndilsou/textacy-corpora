@@ -1,10 +1,17 @@
+from __future__ import annotations
+
+from concurrent.futures import Future, ProcessPoolExecutor, as_completed
+from fnmatch import fnmatch
+import itertools
 from itertools import islice
 import json
 import logging
 from operator import attrgetter, methodcaller
 from pathlib import Path
-from typing import Callable, Dict, Iterable, Iterator, Optional, Sequence, Tuple, TypeVar, Union
-import itertools
+from typing import (Callable, Dict, Iterable, Iterator, List, MutableMapping, Optional, Sequence, Tuple, TypeVar, Union,
+                    cast)
+
+import numpy as np
 import spacy
 from spacy.language import Language
 from spacy.tokens import Doc
@@ -13,10 +20,9 @@ from textacy import Corpus
 from textacy.corpus import _get_spacy_lang
 import toolz as tlz
 import toolz.curried as tlzc
-import numpy as np
 
 from .typing import Data, LabelledData
-from .utils import unpack
+from .utils import unpack, splitext
 
 T = TypeVar('T')
 
@@ -29,11 +35,11 @@ class TextCorpora:
     '''
     def __init__(self,
                  lang: Union[str, Language],
-                 corpora: Optional[Dict[str, Corpus]] = None,
+                 corpora: Optional[MutableMapping[str, Corpus]] = None,
                  meta: Optional[dict] = None
                  ):
         self.lang = _get_spacy_lang(lang)
-        self._corpora: Dict[str, Corpus] = corpora or {}
+        self._corpora: MutableMapping[str, Corpus] = corpora or {}
         self.meta = meta or {}
 
     def __repr__(self):
@@ -74,24 +80,24 @@ class TextCorpora:
         return result
 
     @property
-    def n_corpora(self):
+    def n_corpora(self) -> int:
         return len(self._corpora)
 
     @property
-    def labels(self):
+    def labels(self) -> List[str]:
         return [c for c in self._corpora.keys()]
 
-    def n_docs(self, corpora: Optional[Union[str, Sequence[str]]] = None):
+    def n_docs(self, corpora: Optional[Union[str, Sequence[str]]] = None) -> int:
         func = attrgetter('n_docs')
 
         return self._agg_with(func, sum, corpora)
 
-    def n_sents(self, corpora: Optional[Union[str, Sequence[str]]] = None):
+    def n_sents(self, corpora: Optional[Union[str, Sequence[str]]] = None) -> int:
         func = attrgetter('n_sents')
 
         return self._agg_with(func, sum, corpora)
 
-    def n_tokens(self, corpora: Optional[Union[str, Sequence[str]]] = None):
+    def n_tokens(self, corpora: Optional[Union[str, Sequence[str]]] = None) -> int:
         func = attrgetter('n_tokens')
 
         return self._agg_with(func, sum, corpora)
@@ -193,6 +199,7 @@ class TextCorpora:
         Remove all (or N <= ``limit`` per :class:`Corpus`) docs in :class:`TextCorpora` for which
         ``match_func(doc)`` is True. Corpus doc/sent/token counts are adjusted
         accordingly.
+        Note that in this case the limit is on a corpus basis.
         '''
 
         matched_corpora = self.corpora(corpora)
@@ -200,7 +207,7 @@ class TextCorpora:
         for corpus in matched_corpora:
             corpus.remove(match_func, limit)
 
-    def save(self, dirpath: Union[str, Path]):
+    def save(self, dirpath: Union[str, Path]) -> None:
         '''
         Saves the corpora binaries and the :class:`TextCorpora` metadata to the directory specified by dirpath.
         '''
@@ -213,11 +220,17 @@ class TextCorpora:
             json.dump(self.meta, f)
 
         for label, corpus in self._corpora.items():
-            filepath = dirpath.joinpath(f'{label}.bin').as_posix()
+            filepath = dirpath.joinpath(f'{label}.bin.gz').as_posix()
             corpus.save(filepath)
 
     @classmethod
-    def load(cls, lang: Union[str, Language], dirpath: Union[str, Path]):
+    def load(
+            cls,
+            lang: Union[str, Language],
+            dirpath: Union[str, Path],
+            glob: str = '*',
+            labels: Optional[Sequence[str]] = None
+    ) -> TextCorpora:
         '''
         Loads the corpora binaries and the :class:`TextCorpora` metadata from the directory specified by dirpath.
         '''
@@ -232,14 +245,14 @@ class TextCorpora:
             meta = json.load(f)
 
         corpora = {
-            filepath.stem: Corpus.load(spacy_lang, filepath.as_posix())
+            splitext(filepath.name): Corpus.load(spacy_lang, filepath.as_posix())
 
-            for filepath in dirpath.glob('*.bin')
+            for filepath in dirpath.glob('*.bin.gz') if _filter_label(splitext(filepath.name), glob, labels)
         }
 
         return cls(spacy_lang, corpora, meta)
 
-    def add_corpus(self, label: str, corpus: Corpus):
+    def add_corpus(self, label: str, corpus: Corpus) -> None:
         if label in self._corpora:
             LOGGER.warning('corpus %s exists. It will be overwritten', label)
         self._corpora[label] = corpus
@@ -278,7 +291,7 @@ class TextCorpora:
         corpus = self._get_or_create_corpus(label)
         corpus.add_records(records, batch_size)
 
-    def add(self, label: str,  data: Data, batch_size: int = 1000) -> None:
+    def add(self, label: str, data: Data, batch_size: int = 1000) -> None:
         corpus = self._get_or_create_corpus(label)
         corpus.add(data, batch_size)
 
@@ -290,11 +303,20 @@ class TextCorpora:
 
     def vectors(self, corpora: Optional[Union[str, Sequence[str]]] = None) -> np.ndarray:
         """Constituent docs' word vectors stacked in a 2d array."""
+
         return np.vstack([corpus.vectors for corpus in self.corpora(corpora)])
 
     def vector_norms(self, corpora: Optional[Union[str, Sequence[str]]] = None) -> np.ndarray:
         """Constituent docs' L2-normalized word vectors stacked in a 2d array."""
+
         return np.vstack([corpus.vector_norms for corpus in self.corpora(corpora)])
+
+
+def _filter_label(label: str, glob: str = '*', labels: Optional[Sequence[str]] = None) -> bool:
+    if fnmatch(label, glob) and (not labels or label in labels):
+        return True
+
+    return False
 
 
 __all__ = [
